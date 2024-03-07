@@ -1,0 +1,228 @@
+---
+title: "stackex"
+output: html_document
+date: "2024-03-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Loading the data:
+```{r, include=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(effects)
+library(coefplot)
+library(multcomp)
+library(DHARMa)
+library(lme4)
+
+size <- read_csv() #Please insert size2.csv here
+size
+```
+
+
+Removing some columns:
+```{r, include=FALSE}
+size1 = subset(size,select = -c(Patch_no, 
+                                Area_m2, 
+                                Total_hab_type_in_map_ha, 
+                                Total_hab_type_in_metric_ha, 
+                                `Match_to_pre/post`, 
+                                `Distance to nearest recorded broad hab type (post-only)`,
+                                Notes))
+size1
+str(size1)
+```
+
+Looking at values in habitat_type:
+```{r, include=FALSE}
+unique(size1[c("Patch_hab_type")])
+#There are no duplicate columns which is good
+unique(size1[c("Pre_post")])
+#There are NAs here so I need to remove them
+```
+
+
+Removing NAs in Pre_postdev:
+```{r, include=FALSE}
+missing <- is.na(size1$Pre_post)
+sum(missing)
+#There is one NA, so let me remove this
+size2 <- subset(size1, subset = !missing)
+dim(size1)
+dim(size2)
+#Successfully removed
+```
+
+
+# Q1: Are post-development patches smaller than pre-development patches?
+Hypothesis: post-development patches are smaller than pre-development patches.  
+
+I want to investigate whether there is a significant difference between the size of ‘pre-development’ patches and ‘post-development’ patches. Within this test, I need to account for ‘Patch habitat type’, because the average size of certain habitats are different (eg. I may find a 1 hectare grassland but not 1 hectare of pond), and certain habitats may be more common in the post-development scenario. My data are also not randomly sampled as I randomly sampled developments but then systematically sampled habitat patches within those developments. Thus, I need to do either:  
+* A mixed effects model with a random effect/ grouping factor of development ID.  
+* A generalised linear mixed effect model with a random effect/ grouping factor of development ID.  
+
+Removing outliers and transforming data
+```{r, include=FALSE}
+#Removing the outliers
+size_quartiles <- quantile(size2$Area_ha, probs=c(.25, .75), na.rm = TRUE)
+size_quartiles
+
+size_IQR <- IQR(size2$Area_ha, na.rm = TRUE)
+
+size_Lower <- size_quartiles[1] - 1.5*size_IQR
+size_Upper <- size_quartiles[2] + 1.5*size_IQR
+
+size3 <- subset(size2, size2$Area_ha > size_Lower & size2$Area_ha < size_Upper)
+
+```
+
+Sorting stuff out on both the data with outliers (size2) and the data without outliers (size3):
+```{r, include=FALSE}
+library(lme4)
+
+#First of all I need to change numerical to categorical value for project_ID as this is my categorical random factor. 
+size3$project_ID <- as.factor(size3$project_ID)
+str(size3)
+#This shows me that project_ID is now a factor! Yay!
+size2$project_ID <- as.factor(size2$project_ID) #Doing same thing for size2 (with outliers)
+str(size2)
+
+#I'll check the levels of this factor...
+levels(size3$project_ID)
+#No duplicates, yay
+levels(size2$project_ID) #Doing same thing for size2 (with outliers)
+
+#Also doing the same for habitat type:
+size3$Patch_hab_type <- as.factor(size3$Patch_hab_type)
+str(size3)
+levels(size3$Patch_hab_type)
+#Yay! no duplicates!
+size2$Patch_hab_type <- as.factor(size2$Patch_hab_type) #Doing same thing for size2 (with outliers)
+str(size2)
+levels(size2$Patch_hab_type)
+
+#And broad habitat type:
+size3$Broad_hab <- as.factor(size3$Broad_hab)
+str(size3)
+levels(size3$Broad_hab)
+
+size2$Broad_hab <- as.factor(size2$Broad_hab) #Doing same thing for size2 (with outliers)
+str(size2)
+levels(size2$Broad_hab)
+```
+
+Changing the packages so they've installed correctly would involve:
+```{r, eval=FALSE}
+o <- options(repos = "https://cran.r-project.org/")
+install.packages("Matrix")
+install.packages("lme4")
+options(o)
+```
+
+
+#Plotting my data
+```{r}
+size3$Pre_post <- factor(size3$Pre_post, levels = c("pre", "post")) #Reorder the levels
+size2$Pre_post <- factor(size2$Pre_post, levels = c("pre", "post")) #Same for size2
+
+#Plotting size3
+ggplot(size3, aes(x = Pre_post, y = Area_ha)) +
+  geom_boxplot() +
+  geom_point(position = "jitter", size = 2, alpha = 0.5) +
+  labs(x = "Pre_post", y = "Area_ha", color = "project_ID") +
+  theme_minimal()
+
+#Plotting size2
+ggplot(size2, aes(x = Pre_post, y = Area_ha)) +
+  geom_boxplot() +
+  geom_point(position = "jitter", size = 2, alpha = 0.5) +
+  labs(x = "Pre_post", y = "Area_ha", color = "project_ID") +
+  theme_minimal()
+```
+
+Trying to graph it to see the spread of other bits:
+```{r}
+library(viridis)
+ 
+#By broad habitat type
+ggplot(size3, aes(x = Pre_post, y = Area_ha)) +
+  geom_boxplot() +
+  geom_point(aes(color=Broad_hab), position = "jitter", size = 2, alpha = 0.5) +
+  labs(x = "Pre_post", y = "Area_ha", color = "Broad habitat type") +
+  theme_minimal()
+  
+
+#By development ID
+ggplot(size3, aes(x = Pre_post, y = Area_ha)) +
+  geom_boxplot() +
+  geom_point(aes(color=project_ID), position = "jitter", size = 2, alpha = 0.5) +
+  labs(x = "Pre_post", y = "Area_ha", color = "Development ID") +
+  theme_minimal()
+
+#Checking histogram
+ggplot(size3, aes(x = Area_ha)) + geom_histogram() 
+#right skewed
+```
+
+
+
+### Fitting a GLMM
+My data is not normally distributed, so instead of transforming it I could alternatively use a GLMM which allows me to accommodate non-normally distributed data.
+
+I can’t use a Mann-Whitney because my data aren’t independently sampled; I independently sampled the developments, but then within that, systematically sampled each habitat patch. 
+I can’t use a Wilcoxon Sign Test because my data aren’t independently sampled and it requires paired data, which I don’t have.
+
+
+My data are very right skewed so I should either use an inverse Gaussian or a Gamma distribution. These are good for right skewed data that is between 0 and positive infinity. 
+
+Creating a GLMM with gamma distribution (without outliers):
+
+First, trying with only project as a random effect:
+```{r}
+#checking how many projects i have to check the random effect:
+unique_count <- length(unique(size3$project_ID))
+unique_count
+#There are 25 projects
+
+#Including only project as a random effect:
+glmm_gamma <- glmer(Area_ha ~ Pre_post + (1 | project_ID), 
+                    family = Gamma(link = "log"), 
+                    data = size3)
+summary(glmm_gamma)
+
+
+#This gave me the error "Warning: Model failed to converge with max|grad| = 0.0167468 (tol = 0.002, component 1)" so I'm going to try and rescale and centre my stuff:
+
+mu <- mean(size3$Area_ha, na.rm = TRUE)
+sigma <- sd(size3$Area_ha, na.rm = TRUE)
+size3$Area_ha_scaled <- (size3$Area_ha - mu) / sigma
+#But no I can't do that because then it's negative!
+
+#Trying to check singularity
+tt <- getME(glmm_gamma,"theta")
+ll <- getME(glmm_gamma,"lower")
+min(tt[ll==0])
+#0.8909557, so no worry of singularity
+
+#Trying with more iterations
+glmm_gamma <- glmer(Area_ha ~ Pre_post + (1 | project_ID), 
+                    family = Gamma(link = "log"), 
+                    data = size3,
+                    control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 1000000)))
+#Still didn't work
+
+#Seeing if project_ID has an impact:
+glm_no_random <- glm(Area_ha ~ Pre_post, 
+                        family = Gamma(link = "log"), 
+                        data = size3)
+summary(glm_no_random)
+#But I really can't do this because i need to account for the grouping factor
+
+```
+
+
